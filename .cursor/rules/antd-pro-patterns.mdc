@@ -1,0 +1,984 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Ant Design Pro 开发模式与最佳实践
+
+## ProComponents 使用规范
+
+### 1. ProTable 高级表格
+```typescript
+// src/pages/Project/List/index.tsx
+import { ProTable, ProColumns, ActionType } from '@ant-design/pro-components';
+import { PageContainer } from '@ant-design/pro-layout';
+import { Button, Space, message } from 'antd';
+import { useRef } from 'react';
+import type { ProjectData } from './data.d';
+
+const ProjectList: React.FC = () => {
+  const actionRef = useRef<ActionType>();
+
+  const columns: ProColumns<ProjectData>[] = [
+    {
+      title: '项目名称',
+      dataIndex: 'title',
+      key: 'title',
+      copyable: true,
+      ellipsis: true,
+      formItemProps: {
+        rules: [{ required: true, message: '项目名称为必填项' }],
+      },
+    },
+    {
+      title: '项目状态',
+      dataIndex: 'status',
+      key: 'status',
+      valueType: 'select',
+      valueEnum: {
+        planning: { text: '规划中', status: 'Default' },
+        construction: { text: '建设中', status: 'Processing' },
+        completed: { text: '已完成', status: 'Success' },
+        paused: { text: '暂停', status: 'Error' },
+      },
+      filters: true,
+      onFilter: true,
+    },
+    {
+      title: '项目类型',
+      dataIndex: 'type',
+      key: 'type',
+      valueType: 'select',
+      valueEnum: {
+        residential: '住宅',
+        commercial: '商业',
+        infrastructure: '基础设施',
+      },
+    },
+    {
+      title: '创建时间',
+      dataIndex: 'createdAt',
+      key: 'createdAt',
+      valueType: 'dateTime',
+      sorter: true,
+      hideInSearch: true,
+    },
+    {
+      title: '坐标位置',
+      dataIndex: ['location', 'coordinates'],
+      key: 'coordinates',
+      hideInSearch: true,
+      render: (_, record) => {
+        const [lng, lat] = record.location.coordinates;
+        return `${lng.toFixed(4)}, ${lat.toFixed(4)}`;
+      },
+    },
+    {
+      title: '操作',
+      valueType: 'option',
+      key: 'option',
+      render: (text, record, _, action) => [
+        <a key="view" onClick={() => handleView(record)}>
+          查看
+        </a>,
+        <a key="edit" onClick={() => handleEdit(record)}>
+          编辑
+        </a>,
+        <a 
+          key="delete" 
+          style={{ color: '#ff4d4f' }}
+          onClick={() => handleDelete(record, action)}
+        >
+          删除
+        </a>,
+      ],
+    },
+  ];
+
+  const handleDelete = async (record: ProjectData, action?: ActionType) => {
+    try {
+      await deleteProject(record.id);
+      message.success('删除成功');
+      action?.reload();
+    } catch (error) {
+      message.error('删除失败');
+    }
+  };
+
+  return (
+    <PageContainer>
+      <ProTable<ProjectData>
+        columns={columns}
+        actionRef={actionRef}
+        cardBordered
+        request={async (params, sort, filter) => {
+          const response = await getProjectList({
+            ...params,
+            sort,
+            filter,
+          });
+          return {
+            data: response.data,
+            success: true,
+            total: response.total,
+          };
+        }}
+        editable={{
+          type: 'multiple',
+          onSave: async (rowKey, data) => {
+            await updateProject(rowKey as string, data);
+            message.success('保存成功');
+          },
+        }}
+        columnsState={{
+          persistenceKey: 'pro-table-project-list',
+          persistenceType: 'localStorage',
+        }}
+        rowKey="id"
+        search={{
+          labelWidth: 'auto',
+          optionRender: (searchConfig, formProps, dom) => [
+            ...dom.reverse(),
+            <Button key="export" onClick={() => handleExport()}>
+              导出
+            </Button>,
+          ],
+        }}
+        options={{
+          setting: {
+            listsHeight: 400,
+          },
+        }}
+        form={{
+          syncToUrl: (values, type) => {
+            if (type === 'get') {
+              return {
+                ...values,
+                created_at: [values.startTime, values.endTime],
+              };
+            }
+            return values;
+          },
+        }}
+        pagination={{
+          pageSize: 20,
+          onChange: (page) => console.log(page),
+        }}
+        dateFormatter="string"
+        headerTitle="项目列表"
+        toolBarRender={() => [
+          <Button key="add" type="primary" onClick={handleAdd}>
+            新建项目
+          </Button>,
+        ]}
+      />
+    </PageContainer>
+  );
+};
+```
+
+### 2. ProForm 高级表单
+```typescript
+// src/pages/Project/Form/index.tsx
+import {
+  ProForm,
+  ProFormText,
+  ProFormSelect,
+  ProFormDatePicker,
+  ProFormTextArea,
+  ProFormList,
+  ProFormDependency,
+  ProFormUploadButton,
+} from '@ant-design/pro-components';
+import { PageContainer } from '@ant-design/pro-layout';
+import { message, Card, Row, Col } from 'antd';
+import { useParams, history } from 'umi';
+
+const ProjectForm: React.FC = () => {
+  const params = useParams<{ id?: string }>();
+  const isEdit = !!params.id;
+
+  return (
+    <PageContainer
+      title={isEdit ? '编辑项目' : '新建项目'}
+      onBack={() => history.goBack()}
+    >
+      <Card>
+        <ProForm
+          layout="vertical"
+          onFinish={async (values) => {
+            try {
+              if (isEdit) {
+                await updateProject(params.id!, values);
+                message.success('更新成功');
+              } else {
+                await createProject(values);
+                message.success('创建成功');
+              }
+              history.goBack();
+              return true;
+            } catch (error) {
+              message.error('操作失败');
+              return false;
+            }
+          }}
+          request={async () => {
+            if (isEdit) {
+              const project = await getProject(params.id!);
+              return project;
+            }
+            return {};
+          }}
+          initialValues={{
+            status: 'planning',
+            type: 'residential',
+          }}
+          submitter={{
+            searchConfig: {
+              resetText: '重置',
+              submitText: isEdit ? '更新' : '创建',
+            },
+          }}
+        >
+          <Row gutter={16}>
+            <Col span={12}>
+              <ProFormText
+                name="title"
+                label="项目名称"
+                placeholder="请输入项目名称"
+                rules={[{ required: true, message: '项目名称为必填项' }]}
+              />
+            </Col>
+            <Col span={12}>
+              <ProFormSelect
+                name="status"
+                label="项目状态"
+                valueEnum={{
+                  planning: '规划中',
+                  construction: '建设中',
+                  completed: '已完成',
+                  paused: '暂停',
+                }}
+                rules={[{ required: true, message: '请选择项目状态' }]}
+              />
+            </Col>
+          </Row>
+
+          <Row gutter={16}>
+            <Col span={12}>
+              <ProFormSelect
+                name="type"
+                label="项目类型"
+                valueEnum={{
+                  residential: '住宅',
+                  commercial: '商业',
+                  infrastructure: '基础设施',
+                }}
+                rules={[{ required: true, message: '请选择项目类型' }]}
+              />
+            </Col>
+            <Col span={12}>
+              <ProFormText
+                name={['location', 'address']}
+                label="项目地址"
+                placeholder="请输入项目地址"
+                rules={[{ required: true, message: '项目地址为必填项' }]}
+              />
+            </Col>
+          </Row>
+
+          <Row gutter={16}>
+            <Col span={12}>
+              <ProFormDatePicker
+                name="permitIssuedDate"
+                label="许可证发布日期"
+                placeholder="请选择日期"
+              />
+            </Col>
+            <Col span={12}>
+              <ProFormDatePicker
+                name="expectedCompletionDate"
+                label="预计完工日期"
+                placeholder="请选择日期"
+              />
+            </Col>
+          </Row>
+
+          <ProFormTextArea
+            name="description"
+            label="项目描述"
+            placeholder="请输入项目描述"
+            fieldProps={{
+              rows: 4,
+            }}
+          />
+
+          <ProFormUploadButton
+            name="images"
+            label="项目图片"
+            title="点击上传"
+            max={10}
+            fieldProps={{
+              name: 'file',
+              listType: 'picture-card',
+              action: '/api/upload',
+            }}
+            extra="支持 JPG、PNG 格式，单个文件不超过 5MB"
+          />
+
+          {/* 联系人信息 */}
+          <ProFormList
+            name="developers"
+            label="开发商信息"
+            creatorButtonProps={{
+              creatorButtonText: '添加开发商',
+            }}
+            itemRender={({ listDom, action }, { record }) => {
+              return (
+                <Card
+                  bordered={false}
+                  extra={action}
+                  title={record?.name || '开发商信息'}
+                  style={{ marginBottom: 8 }}
+                >
+                  {listDom}
+                </Card>
+              );
+            }}
+          >
+            <Row gutter={16}>
+              <Col span={8}>
+                <ProFormText
+                  name="name"
+                  label="姓名"
+                  rules={[{ required: true, message: '请输入姓名' }]}
+                />
+              </Col>
+              <Col span={8}>
+                <ProFormText
+                  name="contact"
+                  label="联系方式"
+                  rules={[{ required: true, message: '请输入联系方式' }]}
+                />
+              </Col>
+              <Col span={8}>
+                <ProFormText
+                  name="company"
+                  label="公司名称"
+                />
+              </Col>
+            </Row>
+          </ProFormList>
+
+          {/* 条件渲染 */}
+          <ProFormDependency name={['status']}>
+            {({ status }) => {
+              if (status === 'completed') {
+                return (
+                  <ProFormDatePicker
+                    name="actualCompletionDate"
+                    label="实际完工日期"
+                    rules={[{ required: true, message: '请选择实际完工日期' }]}
+                  />
+                );
+              }
+              return null;
+            }}
+          </ProFormDependency>
+        </ProForm>
+      </Card>
+    </PageContainer>
+  );
+};
+```
+
+### 3. ProDescriptions 详情展示
+```typescript
+// src/pages/Project/Detail/index.tsx
+import { ProDescriptions } from '@ant-design/pro-components';
+import { PageContainer } from '@ant-design/pro-layout';
+import { Card, Button, Space, Tag } from 'antd';
+import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { useParams, history, useModel } from 'umi';
+
+const ProjectDetail: React.FC = () => {
+  const params = useParams<{ id: string }>();
+  const { project, loading } = useModel('project', (model) => ({
+    project: model.selectedProject,
+    loading: model.loading,
+  }));
+
+  const statusColorMap = {
+    planning: 'blue',
+    construction: 'orange',
+    completed: 'green',
+    paused: 'red',
+  };
+
+  return (
+    <PageContainer
+      title="项目详情"
+      extra={[
+        <Button key="edit" type="primary" icon={<EditOutlined />} onClick={() => handleEdit()}>
+          编辑
+        </Button>,
+        <Button key="delete" danger icon={<DeleteOutlined />} onClick={() => handleDelete()}>
+          删除
+        </Button>,
+      ]}
+      onBack={() => history.goBack()}
+      loading={loading}
+    >
+      <Card>
+        <ProDescriptions
+          title="基本信息"
+          dataSource={project}
+          columns={[
+            {
+              title: '项目名称',
+              key: 'title',
+              dataIndex: 'title',
+              copyable: true,
+            },
+            {
+              title: '项目状态',
+              key: 'status',
+              dataIndex: 'status',
+              render: (_, record) => (
+                <Tag color={statusColorMap[record.status]}>
+                  {record.status === 'planning' && '规划中'}
+                  {record.status === 'construction' && '建设中'}
+                  {record.status === 'completed' && '已完成'}
+                  {record.status === 'paused' && '暂停'}
+                </Tag>
+              ),
+            },
+            {
+              title: '项目类型',
+              key: 'type',
+              dataIndex: 'type',
+              valueEnum: {
+                residential: '住宅',
+                commercial: '商业',
+                infrastructure: '基础设施',
+              },
+            },
+            {
+              title: '项目地址',
+              key: 'address',
+              dataIndex: ['location', 'address'],
+              span: 2,
+            },
+            {
+              title: '坐标位置',
+              key: 'coordinates',
+              render: (_, record) => {
+                const [lng, lat] = record.location.coordinates;
+                return `经度: ${lng}, 纬度: ${lat}`;
+              },
+            },
+            {
+              title: '许可证日期',
+              key: 'permitIssuedDate',
+              dataIndex: 'permitIssuedDate',
+              valueType: 'date',
+            },
+            {
+              title: '预计完工',
+              key: 'expectedCompletionDate',
+              dataIndex: 'expectedCompletionDate',
+              valueType: 'date',
+            },
+            {
+              title: '创建时间',
+              key: 'createdAt',
+              dataIndex: 'createdAt',
+              valueType: 'dateTime',
+            },
+          ]}
+        />
+      </Card>
+
+      <Card title="联系人信息" style={{ marginTop: 16 }}>
+        <ProDescriptions
+          title="开发商"
+          dataSource={{ developers: project?.developers }}
+          columns={[
+            {
+              title: '开发商列表',
+              key: 'developers',
+              dataIndex: 'developers',
+              render: (_, record) => (
+                <Space direction="vertical">
+                  {record.developers?.map((dev: any, index: number) => (
+                    <div key={index}>
+                      <strong>{dev.name}</strong> - {dev.contact}
+                      {dev.company && <div>公司: {dev.company}</div>}
+                    </div>
+                  ))}
+                </Space>
+              ),
+            },
+          ]}
+        />
+      </Card>
+    </PageContainer>
+  );
+};
+```
+
+## Umi 路由与权限管理
+
+### 1. 路由配置最佳实践
+```typescript
+// config/routes.ts
+export default [
+  {
+    path: '/user',
+    layout: false,
+    routes: [
+      {
+        name: 'login',
+        path: '/user/login',
+        component: './User/Login',
+      },
+      {
+        component: './404',
+      },
+    ],
+  },
+  {
+    path: '/welcome',
+    name: 'welcome',
+    icon: 'smile',
+    component: './Welcome',
+  },
+  {
+    path: '/dashboard',
+    name: 'dashboard',
+    icon: 'DashboardOutlined',
+    component: './Dashboard',
+    access: 'canViewDashboard',
+  },
+  {
+    name: 'project',
+    icon: 'ProjectOutlined',
+    path: '/project',
+    routes: [
+      {
+        path: '/project',
+        redirect: '/project/list',
+      },
+      {
+        name: 'list',
+        icon: 'TableOutlined',
+        path: '/project/list',
+        component: './Project/List',
+        access: 'canViewProject',
+      },
+      {
+        name: 'form',
+        icon: 'FormOutlined',
+        path: '/project/form',
+        component: './Project/Form',
+        access: 'canCreateProject',
+        hideInMenu: true,
+      },
+      {
+        name: 'edit',
+        path: '/project/edit/:id',
+        component: './Project/Form',
+        access: 'canEditProject',
+        hideInMenu: true,
+      },
+      {
+        name: 'detail',
+        path: '/project/detail/:id',
+        component: './Project/Detail',
+        access: 'canViewProject',
+        hideInMenu: true,
+      },
+    ],
+  },
+  {
+    name: 'map',
+    icon: 'EnvironmentOutlined',
+    path: '/map',
+    component: './Map',
+    access: 'canViewMap',
+  },
+  {
+    path: '/',
+    redirect: '/welcome',
+  },
+  {
+    component: './404',
+  },
+];
+```
+
+### 2. 权限管理
+```typescript
+// src/access.ts
+export default function access(initialState: { currentUser?: API.CurrentUser }) {
+  const { currentUser } = initialState || {};
+
+  return {
+    // 基础权限
+    canViewDashboard: currentUser && ['admin', 'user', 'viewer'].includes(currentUser.role),
+    canViewProject: currentUser && ['admin', 'user', 'viewer'].includes(currentUser.role),
+    canCreateProject: currentUser && ['admin', 'user'].includes(currentUser.role),
+    canEditProject: currentUser && ['admin', 'user'].includes(currentUser.role),
+    canDeleteProject: currentUser && currentUser.role === 'admin',
+    canViewMap: currentUser && ['admin', 'user', 'viewer'].includes(currentUser.role),
+    
+    // 管理员权限
+    canAdmin: currentUser && currentUser.role === 'admin',
+    canManageUsers: currentUser && currentUser.role === 'admin',
+    canManageSettings: currentUser && currentUser.role === 'admin',
+    
+    // 特殊权限
+    canExportData: currentUser && ['admin', 'user'].includes(currentUser.role),
+    canUploadFiles: currentUser && ['admin', 'user'].includes(currentUser.role),
+  };
+}
+```
+
+### 3. 权限组件使用
+```typescript
+// src/components/Access/index.tsx
+import { useAccess, Access } from 'umi';
+import { Button } from 'antd';
+
+const ProjectActions: React.FC<{ project: ProjectData }> = ({ project }) => {
+  const access = useAccess();
+
+  return (
+    <div>
+      <Access accessible={access.canViewProject}>
+        <Button onClick={() => handleView(project)}>查看</Button>
+      </Access>
+      
+      <Access accessible={access.canEditProject} fallback={<div>无编辑权限</div>}>
+        <Button type="primary" onClick={() => handleEdit(project)}>
+          编辑
+        </Button>
+      </Access>
+      
+      <Access accessible={access.canDeleteProject}>
+        <Button danger onClick={() => handleDelete(project)}>
+          删除
+        </Button>
+      </Access>
+    </div>
+  );
+};
+```
+
+## Umi Model 数据流管理
+
+### 1. 全局数据模型
+```typescript
+// src/models/global.ts
+import { useState, useCallback } from 'react';
+import { history } from 'umi';
+
+export default function useGlobalModel() {
+  const [user, setUser] = useState<API.CurrentUser | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const login = useCallback(async (loginData: API.LoginParams) => {
+    setLoading(true);
+    try {
+      const response = await loginUser(loginData);
+      setUser(response.user);
+      localStorage.setItem('token', response.token);
+      history.push('/dashboard');
+      return response;
+    } catch (error) {
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const logout = useCallback(async () => {
+    try {
+      await logoutUser();
+    } finally {
+      setUser(null);
+      localStorage.removeItem('token');
+      history.push('/user/login');
+    }
+  }, []);
+
+  const fetchUserInfo = useCallback(async () => {
+    setLoading(true);
+    try {
+      const userInfo = await getCurrentUser();
+      setUser(userInfo);
+      return userInfo;
+    } catch (error) {
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  return {
+    user,
+    loading,
+    login,
+    logout,
+    fetchUserInfo,
+  };
+}
+```
+
+### 2. 项目数据模型
+```typescript
+// src/models/project.ts
+import { useState, useCallback } from 'react';
+import { message } from 'antd';
+import type { ProjectData } from '@/pages/Project/data.d';
+
+export default function useProjectModel() {
+  const [projects, setProjects] = useState<ProjectData[]>([]);
+  const [selectedProject, setSelectedProject] = useState<ProjectData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [filters, setFilters] = useState<Record<string, any>>({});
+
+  const fetchProjects = useCallback(async (params?: any) => {
+    setLoading(true);
+    try {
+      const response = await getProjectList({ ...filters, ...params });
+      setProjects(response.data);
+      return response;
+    } catch (error) {
+      message.error('获取项目列表失败');
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  }, [filters]);
+
+  const fetchProject = useCallback(async (id: string) => {
+    setLoading(true);
+    try {
+      const project = await getProject(id);
+      setSelectedProject(project);
+      return project;
+    } catch (error) {
+      message.error('获取项目详情失败');
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const createProject = useCallback(async (projectData: Partial<ProjectData>) => {
+    try {
+      const newProject = await createProjectAPI(projectData);
+      message.success('项目创建成功');
+      await fetchProjects();
+      return newProject;
+    } catch (error) {
+      message.error('项目创建失败');
+      throw error;
+    }
+  }, [fetchProjects]);
+
+  const updateProject = useCallback(async (id: string, projectData: Partial<ProjectData>) => {
+    try {
+      const updatedProject = await updateProjectAPI(id, projectData);
+      message.success('项目更新成功');
+      await fetchProjects();
+      setSelectedProject(updatedProject);
+      return updatedProject;
+    } catch (error) {
+      message.error('项目更新失败');
+      throw error;
+    }
+  }, [fetchProjects]);
+
+  const deleteProject = useCallback(async (id: string) => {
+    try {
+      await deleteProjectAPI(id);
+      message.success('项目删除成功');
+      await fetchProjects();
+    } catch (error) {
+      message.error('项目删除失败');
+      throw error;
+    }
+  }, [fetchProjects]);
+
+  return {
+    projects,
+    selectedProject,
+    loading,
+    filters,
+    setFilters,
+    fetchProjects,
+    fetchProject,
+    createProject,
+    updateProject,
+    deleteProject,
+  };
+}
+```
+
+## Umi Request 请求配置
+
+### 1. 请求配置
+```typescript
+// src/app.tsx
+import { RequestConfig } from 'umi';
+import { message } from 'antd';
+
+export const request: RequestConfig = {
+  timeout: 20000,
+  errorConfig: {
+    errorThrower: (res) => {
+      const { success, data, errorCode, errorMessage, showType } = res;
+      if (!success) {
+        const error: any = new Error(errorMessage);
+        error.name = 'BizError';
+        error.info = { errorCode, errorMessage, showType, data };
+        throw error;
+      }
+    },
+    errorHandler: (error: any, opts: any) => {
+      if (opts?.skipErrorHandler) throw error;
+      
+      if (error.name === 'BizError') {
+        const errorInfo = error.info;
+        switch (errorInfo.showType) {
+          case 1:
+            message.error(errorInfo.errorMessage);
+            break;
+          case 2:
+            message.warning(errorInfo.errorMessage);
+            break;
+          case 4:
+            // 跳转到登录页
+            history.push('/user/login');
+            break;
+          default:
+            message.error(errorInfo.errorMessage);
+        }
+      } else if (error.response) {
+        message.error(`请求错误 ${error.response.status}: ${error.response.statusText}`);
+      } else if (error.request) {
+        message.error('网络错误，请检查网络连接');
+      } else {
+        message.error('请求配置错误');
+      }
+    },
+  },
+  requestInterceptors: [
+    (config) => {
+      const token = localStorage.getItem('token');
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
+      return config;
+    },
+  ],
+  responseInterceptors: [
+    (response) => {
+      return response;
+    },
+  ],
+};
+```
+
+### 2. API 服务层
+```typescript
+// src/services/project.ts
+import { request } from 'umi';
+import type { ProjectData } from '@/pages/Project/data.d';
+
+export async function getProjectList(params?: any): Promise<API.Response<ProjectData[]>> {
+  return request('/api/projects', {
+    method: 'GET',
+    params,
+  });
+}
+
+export async function getProject(id: string): Promise<ProjectData> {
+  return request(`/api/projects/${id}`, {
+    method: 'GET',
+  });
+}
+
+export async function createProject(data: Partial<ProjectData>): Promise<ProjectData> {
+  return request('/api/projects', {
+    method: 'POST',
+    data,
+  });
+}
+
+export async function updateProject(id: string, data: Partial<ProjectData>): Promise<ProjectData> {
+  return request(`/api/projects/${id}`, {
+    method: 'PUT',
+    data,
+  });
+}
+
+export async function deleteProject(id: string): Promise<void> {
+  return request(`/api/projects/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function exportProjects(params?: any): Promise<Blob> {
+  return request('/api/projects/export', {
+    method: 'GET',
+    params,
+    responseType: 'blob',
+  });
+}
+```
+
+## 国际化配置
+
+### 1. 多语言配置
+```typescript
+// src/locales/zh-CN/pages.ts
+export default {
+  'pages.layouts.userLayout.title': 'Site Pulse 建筑项目管理系统',
+  'pages.login.title': '登录',
+  'pages.welcome.title': '欢迎使用',
+  'pages.dashboard.title': '仪表板',
+  'pages.project.list.title': '项目列表',
+  'pages.project.form.title': '项目表单',
+  'pages.project.detail.title': '项目详情',
+  'pages.map.title': '项目地图',
+};
+
+// src/locales/zh-CN/component.ts
+export default {
+  'component.tagSelect.expand': '展开',
+  'component.tagSelect.collapse': '收起',
+  'component.tagSelect.all': '全部',
+};
+```
+
+### 2. 国际化使用
+```typescript
+// 在组件中使用
+import { useIntl, FormattedMessage } from 'umi';
+
+const ProjectList: React.FC = () => {
+  const intl = useIntl();
+
+  return (
+    <PageContainer title={intl.formatMessage({ id: 'pages.project.list.title' })}>
+      <ProTable
+        headerTitle={<FormattedMessage id="pages.project.list.title" />}
+        // ...
+      />
+    </PageContainer>
+  );
+};
+```

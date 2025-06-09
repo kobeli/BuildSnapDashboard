@@ -1,0 +1,501 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Site Pulse Web Dashboard 项目规范 (Ant Design Pro)
+
+## 项目概述
+Site Pulse 是一个为建筑相关企业提供实时项目数据服务的 Web Dashboard 工程，基于 Ant Design Pro + React + TypeScript 构建的企业级中后台解决方案。
+
+## 核心功能模块
+
+### 1. 地图可视化系统 (Map Visualization)
+- 基于 Mapbox GL JS 的交互式地图
+- 显示全国工地项目坐标点
+- 支持地图图钉的过滤和筛选功能
+- 点击坐标查看项目详情
+
+### 2. 项目管理系统 (Project Management)
+- 项目信息的 CRUD 操作
+- 工程图片上传、预览、编辑功能
+- 项目详情页面展示
+- 项目数据的结构化存储
+
+### 3. 用户认证系统 (Authentication)
+- 基于 Ant Design Pro 的权限管理
+- JWT Token 认证
+- 角色权限控制
+- 菜单权限配置
+
+### 4. 文件上传系统 (File Upload)
+- 支持工程信息图片上传
+- 图片预览和编辑功能
+- 与后端 API 的文件传输
+
+## 技术栈规范
+
+### 前端技术栈
+- **框架**: Ant Design Pro 6.x (基于 Umi 4.x + React 18)
+- **开发语言**: TypeScript 5.x
+- **UI 组件库**: Ant Design 5.x + ProComponents
+- **地图服务**: Mapbox GL JS
+- **状态管理**: Umi Model + ahooks
+- **HTTP 客户端**: Umi Request (基于 umi-request)
+- **路由**: Umi 路由 + 权限路由
+- **构建工具**: Umi (Webpack/Vite)
+- **样式方案**: Less + CSS Modules
+
+### Ant Design Pro 特色功能
+- **ProTable**: 高级表格组件，支持搜索、排序、分页
+- **ProForm**: 高级表单组件，支持复杂表单场景
+- **ProLayout**: 企业级布局组件
+- **ProDescriptions**: 详情页组件
+- **权限管理**: 基于路由和菜单的权限控制
+- **国际化**: 开箱即用的多语言支持
+- **主题定制**: 动态主题切换
+
+### 项目结构规范 (Ant Design Pro)
+```
+src/
+├── components/          # 业务组件
+│   ├── Map/            # 地图相关组件
+│   ├── Upload/         # 文件上传组件
+│   ├── ProjectCard/    # 项目卡片组件
+│   └── RightContent/   # 右侧内容组件
+├── pages/              # 页面组件
+│   ├── Dashboard/      # 主仪表板
+│   ├── Project/        # 项目管理
+│   │   ├── List/       # 项目列表
+│   │   ├── Detail/     # 项目详情
+│   │   └── Form/       # 项目表单
+│   ├── User/           # 用户管理
+│   └── Welcome.tsx     # 欢迎页
+├── models/             # 数据流 (Umi Model)
+├── services/           # API 服务层
+├── utils/              # 工具函数
+├── access.ts           # 权限定义
+├── app.tsx            # 应用配置
+└── global.less        # 全局样式
+```
+
+### 配置文件结构
+```
+config/
+├── config.ts          # 主配置文件
+├── routes.ts          # 路由配置
+├── proxy.ts           # 代理配置
+└── defaultSettings.ts # 默认设置
+
+.umirc.ts              # Umi 配置文件
+```
+
+## 开发规范
+
+### 页面组件开发
+- 使用 Ant Design Pro 的页面模板
+- 统一使用 ProComponents 系列组件
+- 页面组件使用函数式组件 + Hooks
+- 每个页面包含: `index.tsx`, `data.d.ts`, `service.ts`
+
+### ProTable 使用规范
+```typescript
+// src/pages/Project/List/index.tsx
+import { ProTable, ProColumns } from '@ant-design/pro-components';
+import { PageContainer } from '@ant-design/pro-layout';
+import type { ProjectData } from './data.d';
+
+const ProjectList: React.FC = () => {
+  const columns: ProColumns<ProjectData>[] = [
+    {
+      title: '项目名称',
+      dataIndex: 'title',
+      key: 'title',
+      copyable: true,
+      ellipsis: true,
+    },
+    {
+      title: '项目状态',
+      dataIndex: 'status',
+      key: 'status',
+      valueType: 'select',
+      valueEnum: {
+        planning: { text: '规划中', status: 'Default' },
+        construction: { text: '建设中', status: 'Processing' },
+        completed: { text: '已完成', status: 'Success' },
+      },
+    },
+    {
+      title: '操作',
+      valueType: 'option',
+      key: 'option',
+      render: (text, record) => [
+        <a key="view" onClick={() => handleView(record)}>查看</a>,
+        <a key="edit" onClick={() => handleEdit(record)}>编辑</a>,
+      ],
+    },
+  ];
+
+  return (
+    <PageContainer>
+      <ProTable<ProjectData>
+        columns={columns}
+        request={async (params) => {
+          const response = await getProjectList(params);
+          return {
+            data: response.data,
+            success: true,
+            total: response.total,
+          };
+        }}
+        rowKey="id"
+        search={{
+          labelWidth: 'auto',
+        }}
+        options={{
+          setting: {
+            listsHeight: 400,
+          },
+        }}
+        pagination={{
+          pageSize: 20,
+        }}
+        dateFormatter="string"
+        headerTitle="项目列表"
+        toolBarRender={() => [
+          <Button key="add" type="primary" onClick={handleAdd}>
+            新建项目
+          </Button>,
+        ]}
+      />
+    </PageContainer>
+  );
+};
+```
+
+### ProForm 使用规范
+```typescript
+// src/pages/Project/Form/index.tsx
+import { ProForm, ProFormText, ProFormSelect, ProFormDatePicker } from '@ant-design/pro-components';
+import { PageContainer } from '@ant-design/pro-layout';
+
+const ProjectForm: React.FC = () => {
+  return (
+    <PageContainer>
+      <ProForm
+        onFinish={async (values) => {
+          await createProject(values);
+          message.success('提交成功');
+          return true;
+        }}
+        initialValues={{
+          status: 'planning',
+        }}
+      >
+        <ProFormText
+          width="md"
+          name="title"
+          label="项目名称"
+          placeholder="请输入项目名称"
+          rules={[{ required: true, message: '项目名称为必填项' }]}
+        />
+        
+        <ProFormSelect
+          width="md"
+          name="status"
+          label="项目状态"
+          valueEnum={{
+            planning: '规划中',
+            construction: '建设中',
+            completed: '已完成',
+          }}
+          rules={[{ required: true, message: '请选择项目状态' }]}
+        />
+        
+        <ProFormDatePicker
+          width="md"
+          name="startDate"
+          label="开始日期"
+          rules={[{ required: true, message: '请选择开始日期' }]}
+        />
+      </ProForm>
+    </PageContainer>
+  );
+};
+```
+
+### 数据流管理 (Umi Model)
+```typescript
+// src/models/project.ts
+import { useState, useCallback } from 'react';
+import { getProjectList, createProject, updateProject } from '@/services/project';
+import type { ProjectData } from '@/pages/Project/data.d';
+
+export default function useProjectModel() {
+  const [projects, setProjects] = useState<ProjectData[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [selectedProject, setSelectedProject] = useState<ProjectData | null>(null);
+
+  const fetchProjects = useCallback(async (params?: any) => {
+    setLoading(true);
+    try {
+      const response = await getProjectList(params);
+      setProjects(response.data);
+      return response;
+    } catch (error) {
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const addProject = useCallback(async (project: Partial<ProjectData>) => {
+    try {
+      const response = await createProject(project);
+      await fetchProjects();
+      return response;
+    } catch (error) {
+      throw error;
+    }
+  }, [fetchProjects]);
+
+  const editProject = useCallback(async (id: string, project: Partial<ProjectData>) => {
+    try {
+      const response = await updateProject(id, project);
+      await fetchProjects();
+      return response;
+    } catch (error) {
+      throw error;
+    }
+  }, [fetchProjects]);
+
+  return {
+    projects,
+    loading,
+    selectedProject,
+    setSelectedProject,
+    fetchProjects,
+    addProject,
+    editProject,
+  };
+}
+```
+
+### 权限管理配置
+```typescript
+// src/access.ts
+export default function access(initialState: { currentUser?: API.CurrentUser }) {
+  const { currentUser } = initialState || {};
+
+  return {
+    canAdmin: currentUser && currentUser.access === 'admin',
+    canViewProject: currentUser && ['admin', 'user'].includes(currentUser.access),
+    canEditProject: currentUser && ['admin'].includes(currentUser.access),
+    canDeleteProject: currentUser && currentUser.access === 'admin',
+  };
+}
+```
+
+### 路由配置
+```typescript
+// config/routes.ts
+export default [
+  {
+    path: '/user',
+    layout: false,
+    routes: [
+      {
+        path: '/user/login',
+        layout: false,
+        name: 'login',
+        component: './User/Login',
+      },
+    ],
+  },
+  {
+    path: '/welcome',
+    name: 'welcome',
+    icon: 'smile',
+    component: './Welcome',
+  },
+  {
+    path: '/dashboard',
+    name: 'dashboard',
+    icon: 'dashboard',
+    component: './Dashboard',
+  },
+  {
+    path: '/project',
+    name: 'project',
+    icon: 'table',
+    routes: [
+      {
+        path: '/project/list',
+        name: 'list',
+        component: './Project/List',
+        access: 'canViewProject',
+      },
+      {
+        path: '/project/form',
+        name: 'form',
+        component: './Project/Form',
+        access: 'canEditProject',
+      },
+      {
+        path: '/project/detail/:id',
+        name: 'detail',
+        component: './Project/Detail',
+        hideInMenu: true,
+        access: 'canViewProject',
+      },
+    ],
+  },
+  {
+    path: '/',
+    redirect: '/welcome',
+  },
+  {
+    component: './404',
+  },
+];
+```
+
+## 核心数据模型
+
+### Project 项目数据结构
+参考 [App.tsx](mdc:src/App.tsx) 中的 `ProjectData` 接口定义，扩展为：
+
+```typescript
+// src/pages/Project/data.d.ts
+export interface ProjectData {
+  id: string;
+  title: string;
+  location: {
+    address: string;
+    coordinates: [number, number];
+    planningArea?: string;
+    landLots?: string[];
+  };
+  status: 'planning' | 'construction' | 'completed' | 'paused';
+  type: 'residential' | 'commercial' | 'infrastructure';
+  developers: ContactInfo[];
+  architects: ContactInfo[];
+  structuralEngineers: ContactInfo[];
+  meEngineers: ContactInfo[];
+  quantitySurveyors: ContactInfo[];
+  builders: ContactInfo[];
+  permitIssuedDate?: string;
+  expectedCompletionDate?: string;
+  govContacts: GovContacts;
+  images: string[];
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+  updatedBy: string;
+}
+
+export interface ContactInfo {
+  name: string;
+  contact: string;
+  company?: string;
+  role?: string;
+}
+
+export interface GovContacts {
+  neaApp: string;
+  bcaHotline: string;
+  momHotline: string;
+  momWebsite: string;
+  neaHotline: string;
+}
+```
+
+## 开发指南
+
+### 添加新页面
+1. 在 `src/pages/` 目录创建页面组件
+2. 在 `config/routes.ts` 添加路由配置
+3. 在 `src/access.ts` 定义权限（如需要）
+4. 创建对应的数据类型定义
+5. 创建对应的 API 服务
+
+### 地图集成 (Mapbox + Pro Layout)
+```typescript
+// src/pages/Dashboard/components/MapContainer.tsx
+import React from 'react';
+import { Card } from 'antd';
+import { ProCard } from '@ant-design/pro-components';
+import MapboxMap from '@/components/Map/MapboxMap';
+
+const MapContainer: React.FC = () => {
+  return (
+    <ProCard
+      title="项目地图"
+      extra={
+        <div>
+          {/* 地图控制按钮 */}
+        </div>
+      }
+      style={{ height: '600px' }}
+    >
+      <MapboxMap />
+    </ProCard>
+  );
+};
+```
+
+### 国际化配置
+```typescript
+// src/locales/zh-CN/pages.ts
+export default {
+  'pages.project.list.title': '项目列表',
+  'pages.project.form.title': '项目表单',
+  'pages.project.detail.title': '项目详情',
+  'pages.dashboard.title': '仪表板',
+};
+```
+
+## 部署配置
+
+### 环境变量
+```typescript
+// config/config.ts
+export default defineConfig({
+  define: {
+    REACT_APP_API_BASE_URL: process.env.REACT_APP_API_BASE_URL || 'http://localhost:3001',
+    REACT_APP_MAPBOX_ACCESS_TOKEN: process.env.REACT_APP_MAPBOX_ACCESS_TOKEN,
+  },
+  proxy: {
+    '/api/': {
+      target: 'http://localhost:3001',
+      changeOrigin: true,
+    },
+  },
+});
+```
+
+### 构建优化
+- 启用代码分割和懒加载
+- 使用 Ant Design Pro 内置的优化配置
+- 开启 gzip 压缩
+- 使用 CDN 加速静态资源
+
+## 测试策略
+- 组件单元测试: @testing-library/react + Jest
+- API 集成测试: MSW (Mock Service Worker)  
+- E2E 测试: Playwright
+- ProTable 和 ProForm 组件测试
+- 权限路由测试
+
+## 性能优化
+- 使用 ProTable 内置的虚拟滚动
+- 地图瓦片缓存
+- 路由级别的代码分割
+- ProComponents 按需加载
+- 使用 Umi 的 bundle 分析工具
+
+## 代码质量
+- ESLint + Prettier (Ant Design Pro 内置配置)
+- Husky + lint-staged 提交前检查
+- TypeScript 严格模式
+- Ant Design Pro 代码规范

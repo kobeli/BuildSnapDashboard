@@ -1,0 +1,1426 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Site Pulse 组件开发模式 (Ant Design Pro)
+
+## ProComponents 组件架构
+
+### 1. 页面级组件结构 (Ant Design Pro)
+```
+src/pages/
+├── Dashboard/              # 仪表板页面
+│   ├── index.tsx          # 主页面组件
+│   ├── components/        # 页面专用组件
+│   │   ├── StatCard/      # 统计卡片
+│   │   ├── ChartPanel/    # 图表面板
+│   │   └── MapContainer/  # 地图容器
+│   ├── data.d.ts          # 类型定义
+│   └── service.ts         # API 服务
+├── Project/               # 项目管理
+│   ├── List/              # 项目列表
+│   ├── Detail/            # 项目详情
+│   ├── Form/              # 项目表单
+│   └── components/        # 项目相关组件
+└── User/                  # 用户管理
+    ├── Login/
+    └── Profile/
+```
+
+### 2. 通用组件结构
+```
+src/components/
+├── MapBox/                # 地图相关组件
+│   ├── index.tsx          # 主地图组件
+│   ├── ProjectMarker.tsx  # 项目标记
+│   ├── MapControls.tsx    # 地图控制
+│   ├── data.d.ts          # 类型定义
+│   └── hooks.ts           # 地图相关 hooks
+├── UploadPanel/           # 文件上传组件
+├── ProjectCard/           # 项目卡片
+└── PageHeader/            # 页面头部
+```
+
+## 页面组件开发规范
+
+### 1. ProTable 项目列表页面
+```typescript
+// src/pages/Project/List/index.tsx
+import React, { useRef } from 'react';
+import { ProTable, ActionType, ProColumns } from '@ant-design/pro-components';
+import { PageContainer } from '@ant-design/pro-layout';
+import { Button, Space, Tag, message, Popconfirm } from 'antd';
+import { PlusOutlined, ExportOutlined } from '@ant-design/icons';
+import { useAccess, Access, history, useModel } from 'umi';
+import type { ProjectData } from './data.d';
+import { getProjectList, deleteProject, exportProjects } from './service';
+
+const ProjectList: React.FC = () => {
+  const actionRef = useRef<ActionType>();
+  const access = useAccess();
+  const { initialState } = useModel('@@initialState');
+
+  const columns: ProColumns<ProjectData>[] = [
+    {
+      title: '项目编号',
+      dataIndex: 'id',
+      key: 'id',
+      width: 120,
+      copyable: true,
+      hideInSearch: true,
+    },
+    {
+      title: '项目名称',
+      dataIndex: 'title',
+      key: 'title',
+      ellipsis: true,
+      formItemProps: {
+        rules: [{ required: true, message: '项目名称为必填项' }],
+      },
+      render: (_, record) => (
+        <a onClick={() => history.push(`/project/detail/${record.id}`)}>
+          {record.title}
+        </a>
+      ),
+    },
+    {
+      title: '项目状态',
+      dataIndex: 'status',
+      key: 'status',
+      valueType: 'select',
+      valueEnum: {
+        planning: { text: '规划中', status: 'Default' },
+        construction: { text: '建设中', status: 'Processing' },
+        completed: { text: '已完成', status: 'Success' },
+        paused: { text: '暂停', status: 'Error' },
+      },
+      render: (_, record) => {
+        const statusConfig = {
+          planning: { color: 'blue', text: '规划中' },
+          construction: { color: 'orange', text: '建设中' },
+          completed: { color: 'green', text: '已完成' },
+          paused: { color: 'red', text: '暂停' },
+        };
+        const config = statusConfig[record.status];
+        return <Tag color={config.color}>{config.text}</Tag>;
+      },
+    },
+    {
+      title: '项目类型',
+      dataIndex: 'type',
+      key: 'type',
+      valueType: 'select',
+      valueEnum: {
+        residential: '住宅',
+        commercial: '商业',
+        infrastructure: '基础设施',
+      },
+    },
+    {
+      title: '项目地址',
+      dataIndex: ['location', 'address'],
+      key: 'address',
+      ellipsis: true,
+      hideInSearch: true,
+    },
+    {
+      title: '创建时间',
+      dataIndex: 'createdAt',
+      key: 'createdAt',
+      valueType: 'dateTime',
+      sorter: true,
+      hideInSearch: true,
+    },
+    {
+      title: '更新时间',
+      dataIndex: 'updatedAt',
+      key: 'updatedAt',
+      valueType: 'dateTime',
+      sorter: true,
+      hideInSearch: true,
+    },
+    {
+      title: '操作',
+      valueType: 'option',
+      key: 'option',
+      width: 200,
+      render: (text, record, _, action) => [
+        <a
+          key="view"
+          onClick={() => history.push(`/project/detail/${record.id}`)}
+        >
+          查看
+        </a>,
+        <Access key="edit" accessible={access.canEditProject}>
+          <a onClick={() => history.push(`/project/edit/${record.id}`)}>
+            编辑
+          </a>
+        </Access>,
+        <Access key="delete" accessible={access.canDeleteProject}>
+          <Popconfirm
+            title="确定要删除这个项目吗？"
+            onConfirm={async () => {
+              try {
+                await deleteProject(record.id);
+                message.success('删除成功');
+                action?.reload();
+              } catch (error) {
+                message.error('删除失败');
+              }
+            }}
+          >
+            <a style={{ color: '#ff4d4f' }}>删除</a>
+          </Popconfirm>
+        </Access>,
+      ],
+    },
+  ];
+
+  const handleExport = async () => {
+    try {
+      const blob = await exportProjects();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = url;
+      a.download = 'projects.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      message.success('导出成功');
+    } catch (error) {
+      message.error('导出失败');
+    }
+  };
+
+  return (
+    <PageContainer>
+      <ProTable<ProjectData>
+        columns={columns}
+        actionRef={actionRef}
+        cardBordered
+        request={async (params, sort, filter) => {
+          const response = await getProjectList({
+            ...params,
+            sort,
+            filter,
+          });
+          return {
+            data: response.data,
+            success: true,
+            total: response.total,
+          };
+        }}
+        editable={{
+          type: 'multiple',
+          onSave: async (rowKey, data, row) => {
+            await updateProject(rowKey as string, data);
+            message.success('保存成功');
+          },
+        }}
+        columnsState={{
+          persistenceKey: 'pro-table-project-list',
+          persistenceType: 'localStorage',
+        }}
+        rowKey="id"
+        search={{
+          labelWidth: 'auto',
+          optionRender: (searchConfig, formProps, dom) => [
+            ...dom.reverse(),
+            <Access key="export" accessible={access.canExportData}>
+              <Button icon={<ExportOutlined />} onClick={handleExport}>
+                导出
+              </Button>
+            </Access>,
+          ],
+        }}
+        options={{
+          setting: {
+            listsHeight: 400,
+          },
+        }}
+        form={{
+          syncToUrl: (values, type) => {
+            if (type === 'get') {
+              return {
+                ...values,
+                created_at: [values.startTime, values.endTime],
+              };
+            }
+            return values;
+          },
+        }}
+        pagination={{
+          pageSize: 20,
+          showSizeChanger: true,
+          showQuickJumper: true,
+        }}
+        dateFormatter="string"
+        headerTitle="项目列表"
+        toolBarRender={() => [
+          <Access key="add" accessible={access.canCreateProject}>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => history.push('/project/form')}
+            >
+              新建项目
+            </Button>
+          </Access>,
+        ]}
+      />
+    </PageContainer>
+  );
+};
+
+export default ProjectList;
+```
+
+### 2. ProForm 项目表单页面
+```typescript
+// src/pages/Project/Form/index.tsx
+import React from 'react';
+import {
+  ProForm,
+  ProFormText,
+  ProFormSelect,
+  ProFormDatePicker,
+  ProFormTextArea,
+  ProFormList,
+  ProFormDependency,
+  ProFormUploadButton,
+  ProFormGroup,
+} from '@ant-design/pro-components';
+import { PageContainer } from '@ant-design/pro-layout';
+import { Card, message, Row, Col, Steps } from 'antd';
+import { useParams, history, useModel } from 'umi';
+import { useState } from 'react';
+import type { ProjectData } from './data.d';
+import { createProject, updateProject, getProject } from './service';
+
+const ProjectForm: React.FC = () => {
+  const params = useParams<{ id?: string }>();
+  const isEdit = !!params.id;
+  const [current, setCurrent] = useState(0);
+  const { initialState } = useModel('@@initialState');
+
+  const steps = [
+    {
+      title: '基本信息',
+      content: 'basic-info',
+    },
+    {
+      title: '项目详情',
+      content: 'project-details',
+    },
+    {
+      title: '联系人信息',
+      content: 'contacts',
+    },
+    {
+      title: '附件上传',
+      content: 'attachments',
+    },
+  ];
+
+  return (
+    <PageContainer
+      title={isEdit ? '编辑项目' : '新建项目'}
+      onBack={() => history.goBack()}
+      extra={
+        <Steps current={current} size="small">
+          {steps.map((item) => (
+            <Steps.Step key={item.title} title={item.title} />
+          ))}
+        </Steps>
+      }
+    >
+      <Card>
+        <ProForm
+          layout="vertical"
+          onFinish={async (values) => {
+            try {
+              if (isEdit) {
+                await updateProject(params.id!, values);
+                message.success('更新成功');
+              } else {
+                await createProject(values);
+                message.success('创建成功');
+              }
+              history.goBack();
+              return true;
+            } catch (error) {
+              message.error('操作失败');
+              return false;
+            }
+          }}
+          request={async () => {
+            if (isEdit) {
+              const project = await getProject(params.id!);
+              return project;
+            }
+            return {};
+          }}
+          initialValues={{
+            status: 'planning',
+            type: 'residential',
+          }}
+          submitter={{
+            searchConfig: {
+              resetText: '重置',
+              submitText: isEdit ? '更新' : '创建',
+            },
+            render: (props, doms) => {
+              return [
+                <Row key="submitter" justify="center" gutter={16}>
+                  <Col>{doms[0]}</Col>
+                  <Col>{doms[1]}</Col>
+                </Row>,
+              ];
+            },
+          }}
+        >
+          {/* 基本信息 */}
+          <ProFormGroup title="基本信息">
+            <Row gutter={16}>
+              <Col span={12}>
+                <ProFormText
+                  name="title"
+                  label="项目名称"
+                  placeholder="请输入项目名称"
+                  rules={[{ required: true, message: '项目名称为必填项' }]}
+                />
+              </Col>
+              <Col span={12}>
+                <ProFormSelect
+                  name="status"
+                  label="项目状态"
+                  valueEnum={{
+                    planning: '规划中',
+                    construction: '建设中',
+                    completed: '已完成',
+                    paused: '暂停',
+                  }}
+                  rules={[{ required: true, message: '请选择项目状态' }]}
+                />
+              </Col>
+            </Row>
+
+            <Row gutter={16}>
+              <Col span={12}>
+                <ProFormSelect
+                  name="type"
+                  label="项目类型"
+                  valueEnum={{
+                    residential: '住宅',
+                    commercial: '商业',
+                    infrastructure: '基础设施',
+                  }}
+                  rules={[{ required: true, message: '请选择项目类型' }]}
+                />
+              </Col>
+              <Col span={12}>
+                <ProFormText
+                  name={['location', 'address']}
+                  label="项目地址"
+                  placeholder="请输入项目地址"
+                  rules={[{ required: true, message: '项目地址为必填项' }]}
+                />
+              </Col>
+            </Row>
+          </ProFormGroup>
+
+          {/* 项目详情 */}
+          <ProFormGroup title="项目详情">
+            <Row gutter={16}>
+              <Col span={12}>
+                <ProFormDatePicker
+                  name="permitIssuedDate"
+                  label="许可证发布日期"
+                  placeholder="请选择日期"
+                />
+              </Col>
+              <Col span={12}>
+                <ProFormDatePicker
+                  name="expectedCompletionDate"
+                  label="预计完工日期"
+                  placeholder="请选择日期"
+                />
+              </Col>
+            </Row>
+
+            <ProFormTextArea
+              name="description"
+              label="项目描述"
+              placeholder="请输入项目描述"
+              fieldProps={{
+                rows: 4,
+              }}
+            />
+
+            {/* 条件渲染 */}
+            <ProFormDependency name={['status']}>
+              {({ status }) => {
+                if (status === 'completed') {
+                  return (
+                    <ProFormDatePicker
+                      name="actualCompletionDate"
+                      label="实际完工日期"
+                      rules={[{ required: true, message: '请选择实际完工日期' }]}
+                    />
+                  );
+                }
+                return null;
+              }}
+            </ProFormDependency>
+          </ProFormGroup>
+
+          {/* 联系人信息 */}
+          <ProFormGroup title="联系人信息">
+            <ProFormList
+              name="developers"
+              label="开发商信息"
+              creatorButtonProps={{
+                creatorButtonText: '添加开发商',
+              }}
+              itemRender={({ listDom, action }, { record }) => {
+                return (
+                  <Card
+                    bordered={false}
+                    extra={action}
+                    title={record?.name || '开发商信息'}
+                    style={{ marginBottom: 8 }}
+                  >
+                    {listDom}
+                  </Card>
+                );
+              }}
+            >
+              <Row gutter={16}>
+                <Col span={8}>
+                  <ProFormText
+                    name="name"
+                    label="姓名"
+                    rules={[{ required: true, message: '请输入姓名' }]}
+                  />
+                </Col>
+                <Col span={8}>
+                  <ProFormText
+                    name="contact"
+                    label="联系方式"
+                    rules={[{ required: true, message: '请输入联系方式' }]}
+                  />
+                </Col>
+                <Col span={8}>
+                  <ProFormText name="company" label="公司名称" />
+                </Col>
+              </Row>
+            </ProFormList>
+          </ProFormGroup>
+
+          {/* 文件上传 */}
+          <ProFormGroup title="附件上传">
+            <ProFormUploadButton
+              name="images"
+              label="项目图片"
+              title="点击上传"
+              max={10}
+              fieldProps={{
+                name: 'file',
+                listType: 'picture-card',
+                action: '/api/upload',
+                headers: {
+                  Authorization: `Bearer ${localStorage.getItem('token')}`,
+                },
+              }}
+              extra="支持 JPG、PNG 格式，单个文件不超过 5MB"
+            />
+
+            <ProFormUploadButton
+              name="documents"
+              label="项目文档"
+              title="点击上传"
+              max={5}
+              fieldProps={{
+                name: 'file',
+                listType: 'text',
+                action: '/api/upload',
+                headers: {
+                  Authorization: `Bearer ${localStorage.getItem('token')}`,
+                },
+              }}
+              extra="支持 PDF、DOC、DOCX 格式"
+            />
+          </ProFormGroup>
+        </ProForm>
+      </Card>
+    </PageContainer>
+  );
+};
+
+export default ProjectForm;
+```
+
+### 3. ProDescriptions 项目详情页面
+```typescript
+// src/pages/Project/Detail/index.tsx
+import React, { useEffect } from 'react';
+import { ProDescriptions, ProCard } from '@ant-design/pro-components';
+import { PageContainer } from '@ant-design/pro-layout';
+import {
+  Card,
+  Button,
+  Space,
+  Tag,
+  Image,
+  Row,
+  Col,
+  Statistic,
+  Timeline,
+  Tabs,
+} from 'antd';
+import {
+  EditOutlined,
+  DeleteOutlined,
+  EnvironmentOutlined,
+  FileTextOutlined,
+} from '@ant-design/icons';
+import { useParams, history, useAccess, Access, useModel } from 'umi';
+import type { ProjectData } from './data.d';
+import { getProject, deleteProject } from './service';
+import MapContainer from './components/MapContainer';
+
+const ProjectDetail: React.FC = () => {
+  const params = useParams<{ id: string }>();
+  const access = useAccess();
+  const { project, loading, fetchProject } = useModel('project', (model) => ({
+    project: model.selectedProject,
+    loading: model.loading,
+    fetchProject: model.fetchProject,
+  }));
+
+  useEffect(() => {
+    if (params.id) {
+      fetchProject(params.id);
+    }
+  }, [params.id, fetchProject]);
+
+  const statusColorMap = {
+    planning: 'blue',
+    construction: 'orange',
+    completed: 'green',
+    paused: 'red',
+  };
+
+  const typeMap = {
+    residential: '住宅',
+    commercial: '商业',
+    infrastructure: '基础设施',
+  };
+
+  const handleDelete = async () => {
+    try {
+      await deleteProject(params.id);
+      message.success('删除成功');
+      history.goBack();
+    } catch (error) {
+      message.error('删除失败');
+    }
+  };
+
+  const tabItems = [
+    {
+      key: 'basic',
+      label: '基本信息',
+      children: (
+        <ProDescriptions
+          title="项目基本信息"
+          dataSource={project}
+          columns={[
+            {
+              title: '项目名称',
+              key: 'title',
+              dataIndex: 'title',
+              copyable: true,
+              span: 2,
+            },
+            {
+              title: '项目状态',
+              key: 'status',
+              dataIndex: 'status',
+              render: (_, record) => (
+                <Tag color={statusColorMap[record.status]}>
+                  {record.status === 'planning' && '规划中'}
+                  {record.status === 'construction' && '建设中'}
+                  {record.status === 'completed' && '已完成'}
+                  {record.status === 'paused' && '暂停'}
+                </Tag>
+              ),
+            },
+            {
+              title: '项目类型',
+              key: 'type',
+              dataIndex: 'type',
+              render: (_, record) => typeMap[record.type],
+            },
+            {
+              title: '项目地址',
+              key: 'address',
+              dataIndex: ['location', 'address'],
+              span: 3,
+            },
+            {
+              title: '坐标位置',
+              key: 'coordinates',
+              render: (_, record) => {
+                const [lng, lat] = record.location.coordinates;
+                return `经度: ${lng}, 纬度: ${lat}`;
+              },
+              span: 2,
+            },
+            {
+              title: '许可证日期',
+              key: 'permitIssuedDate',
+              dataIndex: 'permitIssuedDate',
+              valueType: 'date',
+            },
+            {
+              title: '预计完工',
+              key: 'expectedCompletionDate',
+              dataIndex: 'expectedCompletionDate',
+              valueType: 'date',
+            },
+            {
+              title: '创建时间',
+              key: 'createdAt',
+              dataIndex: 'createdAt',
+              valueType: 'dateTime',
+            },
+            {
+              title: '更新时间',
+              key: 'updatedAt',
+              dataIndex: 'updatedAt',
+              valueType: 'dateTime',
+            },
+          ]}
+        />
+      ),
+    },
+    {
+      key: 'contacts',
+      label: '联系人信息',
+      children: (
+        <Card title="项目联系人">
+          <Row gutter={[16, 16]}>
+            {project?.developers?.map((dev, index) => (
+              <Col span={8} key={index}>
+                <Card size="small" title="开发商" bordered={false}>
+                  <p>
+                    <strong>姓名:</strong> {dev.name}
+                  </p>
+                  <p>
+                    <strong>联系方式:</strong> {dev.contact}
+                  </p>
+                  {dev.company && (
+                    <p>
+                      <strong>公司:</strong> {dev.company}
+                    </p>
+                  )}
+                </Card>
+              </Col>
+            ))}
+          </Row>
+        </Card>
+      ),
+    },
+    {
+      key: 'location',
+      label: '位置信息',
+      children: (
+        <Card>
+          <MapContainer
+            center={project?.location.coordinates}
+            projects={project ? [project] : []}
+            height={400}
+          />
+        </Card>
+      ),
+    },
+    {
+      key: 'attachments',
+      label: '附件资料',
+      children: (
+        <Card title="项目图片">
+          <Image.PreviewGroup>
+            {project?.images?.map((url, index) => (
+              <Image
+                key={index}
+                width={200}
+                src={url}
+                style={{ margin: '8px' }}
+              />
+            ))}
+          </Image.PreviewGroup>
+        </Card>
+      ),
+    },
+  ];
+
+  return (
+    <PageContainer
+      title="项目详情"
+      extra={[
+        <Access key="edit" accessible={access.canEditProject}>
+          <Button
+            type="primary"
+            icon={<EditOutlined />}
+            onClick={() => history.push(`/project/edit/${params.id}`)}
+          >
+            编辑
+          </Button>
+        </Access>,
+        <Access key="delete" accessible={access.canDeleteProject}>
+          <Button danger icon={<DeleteOutlined />} onClick={handleDelete}>
+            删除
+          </Button>
+        </Access>,
+      ]}
+      onBack={() => history.goBack()}
+      loading={loading}
+    >
+      <Row gutter={16} style={{ marginBottom: 16 }}>
+        <Col span={6}>
+          <ProCard>
+            <Statistic
+              title="项目状态"
+              value={statusColorMap[project?.status] || '未知'}
+              prefix={<EnvironmentOutlined />}
+            />
+          </ProCard>
+        </Col>
+        <Col span={6}>
+          <ProCard>
+            <Statistic
+              title="项目类型"
+              value={typeMap[project?.type] || '未知'}
+              prefix={<FileTextOutlined />}
+            />
+          </ProCard>
+        </Col>
+        <Col span={6}>
+          <ProCard>
+            <Statistic
+              title="创建时间"
+              value={project?.createdAt}
+              valueStyle={{ fontSize: '16px' }}
+            />
+          </ProCard>
+        </Col>
+        <Col span={6}>
+          <ProCard>
+            <Statistic
+              title="更新时间"
+              value={project?.updatedAt}
+              valueStyle={{ fontSize: '16px' }}
+            />
+          </ProCard>
+        </Col>
+      </Row>
+
+      <Card>
+        <Tabs items={tabItems} />
+      </Card>
+    </PageContainer>
+  );
+};
+
+export default ProjectDetail;
+```
+
+## 通用组件开发规范
+
+### 1. 地图组件 (Mapbox + ProCard)
+```typescript
+// src/components/MapBox/index.tsx
+import React, { useEffect, useRef, useState } from 'react';
+import mapboxgl from 'mapbox-gl';
+import { ProCard } from '@ant-design/pro-components';
+import { Spin, Button, Space } from 'antd';
+import {
+  EnvironmentOutlined,
+  ZoomInOutlined,
+  ZoomOutOutlined,
+  FullscreenOutlined,
+} from '@ant-design/icons';
+import type { ProjectData } from '@/pages/Project/data.d';
+import 'mapbox-gl/dist/mapbox-gl.css';
+
+interface MapBoxProps {
+  projects: ProjectData[];
+  center?: [number, number];
+  zoom?: number;
+  height?: number;
+  onProjectClick?: (project: ProjectData) => void;
+  onMapClick?: (coordinates: [number, number]) => void;
+  className?: string;
+}
+
+const MapBox: React.FC<MapBoxProps> = ({
+  projects,
+  center = [103.8198, 1.3521],
+  zoom = 11,
+  height = 500,
+  onProjectClick,
+  onMapClick,
+  className,
+}) => {
+  const mapContainer = useRef<HTMLDivElement>(null);
+  const map = useRef<mapboxgl.Map | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [mapLoaded, setMapLoaded] = useState(false);
+
+  // 初始化地图
+  useEffect(() => {
+    if (!mapContainer.current || map.current) return;
+
+    mapboxgl.accessToken = process.env.REACT_APP_MAPBOX_ACCESS_TOKEN!;
+
+    map.current = new mapboxgl.Map({
+      container: mapContainer.current,
+      style: 'mapbox://styles/mapbox/streets-v11',
+      center,
+      zoom,
+    });
+
+    map.current.on('load', () => {
+      setLoading(false);
+      setMapLoaded(true);
+    });
+
+    map.current.on('click', (e) => {
+      if (onMapClick) {
+        onMapClick([e.lngLat.lng, e.lngLat.lat]);
+      }
+    });
+
+    return () => {
+      if (map.current) {
+        map.current.remove();
+        map.current = null;
+      }
+    };
+  }, []);
+
+  // 添加项目标记
+  useEffect(() => {
+    if (!map.current || !mapLoaded) return;
+
+    // 清除现有标记
+    const existingMarkers = document.querySelectorAll('.mapbox-marker');
+    existingMarkers.forEach((marker) => marker.remove());
+
+    // 添加新标记
+    projects.forEach((project) => {
+      const el = document.createElement('div');
+      el.className = 'mapbox-marker';
+      el.style.backgroundImage = `url(/images/marker-${project.status}.png)`;
+      el.style.width = '25px';
+      el.style.height = '25px';
+      el.style.backgroundSize = 'contain';
+      el.style.cursor = 'pointer';
+
+      el.addEventListener('click', () => {
+        if (onProjectClick) {
+          onProjectClick(project);
+        }
+      });
+
+      // 创建弹窗
+      const popup = new mapboxgl.Popup({ offset: 25 }).setHTML(`
+        <div>
+          <h4>${project.title}</h4>
+          <p>状态: ${project.status}</p>
+          <p>类型: ${project.type}</p>
+          <p>地址: ${project.location.address}</p>
+        </div>
+      `);
+
+      new mapboxgl.Marker(el)
+        .setLngLat(project.location.coordinates)
+        .setPopup(popup)
+        .addTo(map.current!);
+    });
+  }, [projects, mapLoaded, onProjectClick]);
+
+  const handleZoomIn = () => {
+    if (map.current) {
+      map.current.zoomIn();
+    }
+  };
+
+  const handleZoomOut = () => {
+    if (map.current) {
+      map.current.zoomOut();
+    }
+  };
+
+  const handleFullscreen = () => {
+    if (map.current) {
+      if (map.current.isFullscreen()) {
+        map.current.getContainer().requestFullscreen();
+      } else {
+        document.exitFullscreen();
+      }
+    }
+  };
+
+  return (
+    <ProCard
+      title="项目地图"
+      extra={
+        <Space>
+          <Button
+            size="small"
+            icon={<ZoomInOutlined />}
+            onClick={handleZoomIn}
+          />
+          <Button
+            size="small"
+            icon={<ZoomOutOutlined />}
+            onClick={handleZoomOut}
+          />
+          <Button
+            size="small"
+            icon={<FullscreenOutlined />}
+            onClick={handleFullscreen}
+          />
+        </Space>
+      }
+      className={className}
+    >
+      <div style={{ position: 'relative', height }}>
+        {loading && (
+          <div
+            style={{
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              zIndex: 1000,
+            }}
+          >
+            <Spin size="large" />
+          </div>
+        )}
+        <div
+          ref={mapContainer}
+          style={{
+            width: '100%',
+            height: '100%',
+          }}
+        />
+      </div>
+    </ProCard>
+  );
+};
+
+export default MapBox;
+```
+
+### 2. 项目卡片组件
+```typescript
+// src/components/ProjectCard/index.tsx
+import React from 'react';
+import { Card, Tag, Button, Space, Avatar } from 'antd';
+import {
+  EnvironmentOutlined,
+  CalendarOutlined,
+  TeamOutlined,
+  EyeOutlined,
+  EditOutlined,
+} from '@ant-design/icons';
+import { useAccess, Access, history } from 'umi';
+import type { ProjectData } from '@/pages/Project/data.d';
+import styles from './index.less';
+
+interface ProjectCardProps {
+  project: ProjectData;
+  onView?: (project: ProjectData) => void;
+  onEdit?: (project: ProjectData) => void;
+  className?: string;
+}
+
+const ProjectCard: React.FC<ProjectCardProps> = ({
+  project,
+  onView,
+  onEdit,
+  className,
+}) => {
+  const access = useAccess();
+
+  const statusConfig = {
+    planning: { color: 'blue', text: '规划中' },
+    construction: { color: 'orange', text: '建设中' },
+    completed: { color: 'green', text: '已完成' },
+    paused: { color: 'red', text: '暂停' },
+  };
+
+  const typeConfig = {
+    residential: { color: 'purple', text: '住宅' },
+    commercial: { color: 'cyan', text: '商业' },
+    infrastructure: { color: 'geekblue', text: '基础设施' },
+  };
+
+  const handleView = () => {
+    if (onView) {
+      onView(project);
+    } else {
+      history.push(`/project/detail/${project.id}`);
+    }
+  };
+
+  const handleEdit = () => {
+    if (onEdit) {
+      onEdit(project);
+    } else {
+      history.push(`/project/edit/${project.id}`);
+    }
+  };
+
+  return (
+    <Card
+      className={`${styles.projectCard} ${className || ''}`}
+      cover={
+        project.images?.[0] && (
+          <div className={styles.cover}>
+            <img
+              alt={project.title}
+              src={project.images[0]}
+              style={{ height: '200px', objectFit: 'cover' }}
+            />
+            <div className={styles.overlay}>
+              <Space>
+                <Tag color={statusConfig[project.status].color}>
+                  {statusConfig[project.status].text}
+                </Tag>
+                <Tag color={typeConfig[project.type].color}>
+                  {typeConfig[project.type].text}
+                </Tag>
+              </Space>
+            </div>
+          </div>
+        )
+      }
+      actions={[
+        <Button
+          key="view"
+          type="text"
+          icon={<EyeOutlined />}
+          onClick={handleView}
+        >
+          查看
+        </Button>,
+        <Access key="edit" accessible={access.canEditProject}>
+          <Button
+            type="text"
+            icon={<EditOutlined />}
+            onClick={handleEdit}
+          >
+            编辑
+          </Button>
+        </Access>,
+      ]}
+    >
+      <Card.Meta
+        title={
+          <div className={styles.title}>
+            <span>{project.title}</span>
+            <Space size={4}>
+              {!project.images?.[0] && (
+                <>
+                  <Tag color={statusConfig[project.status].color} size="small">
+                    {statusConfig[project.status].text}
+                  </Tag>
+                  <Tag color={typeConfig[project.type].color} size="small">
+                    {typeConfig[project.type].text}
+                  </Tag>
+                </>
+              )}
+            </Space>
+          </div>
+        }
+        description={
+          <div className={styles.description}>
+            <div className={styles.info}>
+              <EnvironmentOutlined className={styles.icon} />
+              <span className={styles.text}>{project.location.address}</span>
+            </div>
+            <div className={styles.info}>
+              <CalendarOutlined className={styles.icon} />
+              <span className={styles.text}>
+                {new Date(project.createdAt).toLocaleDateString()}
+              </span>
+            </div>
+            {project.developers?.[0] && (
+              <div className={styles.info}>
+                <TeamOutlined className={styles.icon} />
+                <span className={styles.text}>
+                  {project.developers[0].name}
+                </span>
+              </div>
+            )}
+          </div>
+        }
+      />
+    </Card>
+  );
+};
+
+export default ProjectCard;
+```
+
+### 3. 文件上传组件
+```typescript
+// src/components/UploadPanel/index.tsx
+import React, { useState } from 'react';
+import { Upload, Button, message, Modal, Progress, Card } from 'antd';
+import {
+  UploadOutlined,
+  InboxOutlined,
+  DeleteOutlined,
+  EyeOutlined,
+} from '@ant-design/icons';
+import { ProCard } from '@ant-design/pro-components';
+import type { UploadFile, UploadProps } from 'antd/es/upload/interface';
+import { uploadFile, uploadAndParseImage } from '@/services/upload';
+import type { ProjectData } from '@/pages/Project/data.d';
+
+interface UploadPanelProps {
+  value?: string[];
+  onChange?: (fileList: string[]) => void;
+  maxCount?: number;
+  accept?: string;
+  listType?: 'text' | 'picture' | 'picture-card';
+  enableParsing?: boolean;
+  onParseComplete?: (projectData: ProjectData) => void;
+  className?: string;
+}
+
+const UploadPanel: React.FC<UploadPanelProps> = ({
+  value = [],
+  onChange,
+  maxCount = 10,
+  accept = 'image/*',
+  listType = 'picture-card',
+  enableParsing = false,
+  onParseComplete,
+  className,
+}) => {
+  const [fileList, setFileList] = useState<UploadFile[]>([]);
+  const [previewVisible, setPreviewVisible] = useState(false);
+  const [previewImage, setPreviewImage] = useState('');
+  const [previewTitle, setPreviewTitle] = useState('');
+  const [uploading, setUploading] = useState(false);
+
+  const handlePreview = async (file: UploadFile) => {
+    if (!file.url && !file.preview) {
+      file.preview = await getBase64(file.originFileObj as File);
+    }
+
+    setPreviewImage(file.url || (file.preview as string));
+    setPreviewVisible(true);
+    setPreviewTitle(
+      file.name || file.url!.substring(file.url!.lastIndexOf('/') + 1)
+    );
+  };
+
+  const handleChange: UploadProps['onChange'] = ({ fileList: newFileList }) => {
+    setFileList(newFileList);
+    const urls = newFileList
+      .filter((file) => file.status === 'done')
+      .map((file) => file.response?.url || file.url)
+      .filter(Boolean);
+    onChange?.(urls);
+  };
+
+  const handleRemove = (file: UploadFile) => {
+    const newFileList = fileList.filter((item) => item.uid !== file.uid);
+    setFileList(newFileList);
+    const urls = newFileList
+      .map((item) => item.response?.url || item.url)
+      .filter(Boolean);
+    onChange?.(urls);
+  };
+
+  const customUpload = async ({ file, onProgress, onSuccess, onError }: any) => {
+    setUploading(true);
+    try {
+      let response;
+      if (enableParsing && file.type.startsWith('image/')) {
+        response = await uploadAndParseImage(file);
+        if (onParseComplete) {
+          onParseComplete(response);
+        }
+      } else {
+        response = await uploadFile(file);
+      }
+
+      onSuccess(response);
+      message.success('上传成功');
+    } catch (error) {
+      onError(error);
+      message.error('上传失败');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const uploadButton = (
+    <div>
+      <UploadOutlined />
+      <div style={{ marginTop: 8 }}>上传</div>
+    </div>
+  );
+
+  return (
+    <ProCard title="文件上传" className={className}>
+      <Upload
+        listType={listType}
+        fileList={fileList}
+        onPreview={handlePreview}
+        onChange={handleChange}
+        onRemove={handleRemove}
+        customRequest={customUpload}
+        accept={accept}
+        multiple
+        maxCount={maxCount}
+        beforeUpload={(file) => {
+          const isValidSize = file.size / 1024 / 1024 < 5;
+          if (!isValidSize) {
+            message.error('文件大小不能超过 5MB');
+          }
+          return isValidSize;
+        }}
+      >
+        {fileList.length >= maxCount ? null : uploadButton}
+      </Upload>
+
+      {enableParsing && (
+        <Card style={{ marginTop: 16 }}>
+          <Upload.Dragger
+            accept="image/*"
+            customRequest={customUpload}
+            showUploadList={false}
+            disabled={uploading}
+          >
+            <p className="ant-upload-drag-icon">
+              <InboxOutlined />
+            </p>
+            <p className="ant-upload-text">拖拽图片到此处自动解析项目信息</p>
+            <p className="ant-upload-hint">
+              支持 JPG、PNG 格式，系统将自动识别图片中的项目信息
+            </p>
+            {uploading && <Progress percent={50} />}
+          </Upload.Dragger>
+        </Card>
+      )}
+
+      <Modal
+        visible={previewVisible}
+        title={previewTitle}
+        footer={null}
+        onCancel={() => setPreviewVisible(false)}
+      >
+        <img alt="preview" style={{ width: '100%' }} src={previewImage} />
+      </Modal>
+    </ProCard>
+  );
+};
+
+// 辅助函数
+const getBase64 = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = (error) => reject(error);
+  });
+
+export default UploadPanel;
+```
+
+## 组件样式规范
+
+### 1. Less 样式文件
+```less
+// src/components/ProjectCard/index.less
+.projectCard {
+  .cover {
+    position: relative;
+    overflow: hidden;
+
+    .overlay {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+    }
+  }
+
+  .title {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .description {
+    .info {
+      display: flex;
+      align-items: center;
+      margin-bottom: 4px;
+      
+      .icon {
+        margin-right: 4px;
+        color: @text-color-secondary;
+      }
+      
+      .text {
+        color: @text-color-secondary;
+        font-size: 12px;
+      }
+    }
+  }
+}
+```
+
+### 2. 响应式设计
+```typescript
+// 响应式断点使用
+const breakpoints = {
+  xs: '(max-width: 575px)',
+  sm: '(min-width: 576px)',
+  md: '(min-width: 768px)',
+  lg: '(min-width: 992px)',
+  xl: '(min-width: 1200px)',
+  xxl: '(min-width: 1600px)',
+};
+
+// 在组件中使用
+const ProjectCard: React.FC = () => {
+  return (
+    <Col xs={24} sm={12} md={8} lg={6} xl={4}>
+      <ProjectCard />
+    </Col>
+  );
+};
+```
+
+这套组件开发模式为 Ant Design Pro 项目提供了：
+
+✅ **完整的页面模板**：基于 ProComponents 的标准化页面结构  
+✅ **权限控制集成**：与 Umi 权限系统无缝集成  
+✅ **类型安全**：完整的 TypeScript 类型定义  
+✅ **响应式设计**：适配各种屏幕尺寸  
+✅ **组件复用**：模块化的组件架构  
+✅ **最佳实践**：遵循 Ant Design Pro 官方规范  
+✅ **性能优化**：内置懒加载和优化机制

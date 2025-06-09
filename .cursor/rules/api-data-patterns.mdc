@@ -1,0 +1,837 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Site Pulse API 集成与数据管理模式 (Ant Design Pro)
+
+## Umi Request API 客户端架构
+
+### 1. 全局请求配置
+```typescript
+// src/app.tsx
+import { RequestConfig } from 'umi';
+import { message, notification } from 'antd';
+
+export const request: RequestConfig = {
+  timeout: 20000,
+  credentials: 'include',
+  
+  // 错误配置
+  errorConfig: {
+    errorThrower: (res) => {
+      const { success, data, errorCode, errorMessage, showType } = res;
+      if (!success) {
+        const error: any = new Error(errorMessage);
+        error.name = 'BizError';
+        error.info = { errorCode, errorMessage, showType, data };
+        throw error;
+      }
+    },
+    
+    errorHandler: (error: any, opts: any) => {
+      if (opts?.skipErrorHandler) throw error;
+      
+      // 业务错误处理
+      if (error.name === 'BizError') {
+        const errorInfo = error.info;
+        switch (errorInfo.showType) {
+          case 1: // 静默错误，不显示
+            break;
+          case 2: // 警告消息
+            message.warning(errorInfo.errorMessage);
+            break;
+          case 3: // 错误消息
+            message.error(errorInfo.errorMessage);
+            break;
+          case 4: // 通知消息
+            notification.open({
+              message: '系统通知',
+              description: errorInfo.errorMessage,
+            });
+            break;
+          case 9: // 跳转到登录页
+            localStorage.removeItem('token');
+            window.location.href = '/user/login';
+            break;
+          default:
+            message.error(errorInfo.errorMessage);
+        }
+      } else if (error.response) {
+        // HTTP 错误处理
+        const { status } = error.response;
+        switch (status) {
+          case 401:
+            message.error('未授权，请重新登录');
+            localStorage.removeItem('token');
+            window.location.href = '/user/login';
+            break;
+          case 403:
+            message.error('拒绝访问');
+            break;
+          case 404:
+            message.error('请求的资源不存在');
+            break;
+          case 500:
+            message.error('服务器内部错误');
+            break;
+          default:
+            message.error(`请求错误 ${status}: ${error.response.statusText}`);
+        }
+      } else if (error.request) {
+        message.error('网络错误，请检查网络连接');
+      } else {
+        message.error('请求配置错误');
+      }
+    },
+  },
+  
+  // 请求拦截器
+  requestInterceptors: [
+    (config) => {
+      // 添加认证 token
+      const token = localStorage.getItem('token');
+      if (token) {
+        config.headers = {
+          ...config.headers,
+          Authorization: `Bearer ${token}`,
+        };
+      }
+      
+      // 添加请求时间戳
+      config.headers['X-Timestamp'] = Date.now().toString();
+      
+      return config;
+    },
+  ],
+  
+  // 响应拦截器
+  responseInterceptors: [
+    (response) => {
+      // 统一处理响应数据
+      const { data } = response;
+      if (data && typeof data === 'object') {
+        return data;
+      }
+      return response;
+    },
+  ],
+};
+```
+
+### 2. API 类型定义
+```typescript
+// src/typings.d.ts
+declare namespace API {
+  // 通用响应结构
+  interface Response<T = any> {
+    success: boolean;
+    data: T;
+    errorCode?: string;
+    errorMessage?: string;
+    showType?: number;
+    traceId?: string;
+    host?: string;
+  }
+
+  // 分页响应结构
+  interface PageResponse<T = any> extends Response<T[]> {
+    total: number;
+    current: number;
+    pageSize: number;
+  }
+
+  // 用户相关类型
+  interface CurrentUser {
+    id: string;
+    name: string;
+    email: string;
+    avatar?: string;
+    role: 'admin' | 'user' | 'viewer';
+    permissions: string[];
+    company?: string;
+  }
+
+  interface LoginParams {
+    email: string;
+    password: string;
+    autoLogin?: boolean;
+  }
+
+  interface LoginResult {
+    token: string;
+    user: CurrentUser;
+    expires: number;
+  }
+
+  // 项目相关类型
+  interface ProjectParams {
+    current?: number;
+    pageSize?: number;
+    title?: string;
+    status?: string[];
+    type?: string[];
+    keyword?: string;
+    dateRange?: [string, string];
+  }
+}
+```
+
+### 3. 项目数据服务
+```typescript
+// src/services/project.ts
+import { request } from 'umi';
+import type { ProjectData } from '@/pages/Project/data.d';
+
+// 获取项目列表
+export async function getProjectList(params: API.ProjectParams = {}): Promise<API.PageResponse<ProjectData>> {
+  return request('/api/projects', {
+    method: 'GET',
+    params: {
+      current: params.current || 1,
+      pageSize: params.pageSize || 20,
+      ...params,
+    },
+  });
+}
+
+// 获取单个项目
+export async function getProject(id: string): Promise<ProjectData> {
+  return request(`/api/projects/${id}`, {
+    method: 'GET',
+  });
+}
+
+// 创建项目
+export async function createProject(data: Partial<ProjectData>): Promise<ProjectData> {
+  return request('/api/projects', {
+    method: 'POST',
+    data,
+  });
+}
+
+// 更新项目
+export async function updateProject(id: string, data: Partial<ProjectData>): Promise<ProjectData> {
+  return request(`/api/projects/${id}`, {
+    method: 'PUT',
+    data,
+  });
+}
+
+// 删除项目
+export async function deleteProject(id: string): Promise<void> {
+  return request(`/api/projects/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+// 批量删除项目
+export async function batchDeleteProjects(ids: string[]): Promise<void> {
+  return request('/api/projects/batch', {
+    method: 'DELETE',
+    data: { ids },
+  });
+}
+
+// 获取地图项目数据
+export async function getMapProjects(params?: {
+  bounds?: [number, number, number, number]; // [西, 南, 东, 北]
+  zoom?: number;
+  status?: string[];
+  type?: string[];
+}): Promise<ProjectData[]> {
+  return request('/api/projects/map', {
+    method: 'GET',
+    params,
+  });
+}
+
+// 导出项目数据
+export async function exportProjects(params?: API.ProjectParams): Promise<Blob> {
+  return request('/api/projects/export', {
+    method: 'GET',
+    params,
+    responseType: 'blob',
+  });
+}
+
+// 批量更新项目状态
+export async function batchUpdateStatus(ids: string[], status: string): Promise<void> {
+  return request('/api/projects/batch-status', {
+    method: 'PATCH',
+    data: { ids, status },
+  });
+}
+
+// 获取项目统计数据
+export async function getProjectStats(): Promise<{
+  total: number;
+  byStatus: Record<string, number>;
+  byType: Record<string, number>;
+  recentActivity: any[];
+}> {
+  return request('/api/projects/stats', {
+    method: 'GET',
+  });
+}
+```
+
+### 4. 文件上传服务
+```typescript
+// src/services/upload.ts
+import { request } from 'umi';
+
+export interface UploadResponse {
+  url: string;
+  filename: string;
+  originalName: string;
+  size: number;
+  mimetype: string;
+  hash?: string;
+}
+
+// 单文件上传
+export async function uploadFile(file: File): Promise<UploadResponse> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  return request('/api/upload', {
+    method: 'POST',
+    data: formData,
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+}
+
+// 图片上传并解析项目信息
+export async function uploadAndParseImage(file: File): Promise<ProjectData> {
+  const formData = new FormData();
+  formData.append('image', file);
+
+  return request('/api/upload/parse', {
+    method: 'POST',
+    data: formData,
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+}
+
+// 批量文件上传
+export async function uploadMultipleFiles(files: File[]): Promise<UploadResponse[]> {
+  const formData = new FormData();
+  files.forEach((file, index) => {
+    formData.append(`files[${index}]`, file);
+  });
+
+  return request('/api/upload/multiple', {
+    method: 'POST',
+    data: formData,
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+}
+
+// 删除文件
+export async function deleteFile(url: string): Promise<void> {
+  return request('/api/upload', {
+    method: 'DELETE',
+    data: { url },
+  });
+}
+```
+
+### 5. 用户认证服务
+```typescript
+// src/services/auth.ts
+import { request } from 'umi';
+
+// 用户登录
+export async function login(params: API.LoginParams): Promise<API.LoginResult> {
+  return request('/api/auth/login', {
+    method: 'POST',
+    data: params,
+  });
+}
+
+// 用户注册
+export async function register(params: {
+  name: string;
+  email: string;
+  password: string;
+  company?: string;
+}): Promise<API.LoginResult> {
+  return request('/api/auth/register', {
+    method: 'POST',
+    data: params,
+  });
+}
+
+// 用户登出
+export async function logout(): Promise<void> {
+  return request('/api/auth/logout', {
+    method: 'POST',
+  });
+}
+
+// 获取当前用户信息
+export async function getCurrentUser(): Promise<API.CurrentUser> {
+  return request('/api/auth/currentUser', {
+    method: 'GET',
+  });
+}
+
+// 刷新 token
+export async function refreshToken(): Promise<{ token: string; expires: number }> {
+  return request('/api/auth/refresh', {
+    method: 'POST',
+  });
+}
+
+// 修改密码
+export async function changePassword(params: {
+  oldPassword: string;
+  newPassword: string;
+}): Promise<void> {
+  return request('/api/auth/change-password', {
+    method: 'PUT',
+    data: params,
+  });
+}
+
+// 忘记密码
+export async function forgotPassword(email: string): Promise<void> {
+  return request('/api/auth/forgot-password', {
+    method: 'POST',
+    data: { email },
+  });
+}
+
+// 重置密码
+export async function resetPassword(params: {
+  token: string;
+  password: string;
+}): Promise<void> {
+  return request('/api/auth/reset-password', {
+    method: 'POST',
+    data: params,
+  });
+}
+```
+
+## Umi Model 数据流管理
+
+### 1. 全局用户模型
+```typescript
+// src/models/user.ts
+import { useState, useCallback } from 'react';
+import { history } from 'umi';
+import { message } from 'antd';
+import * as authService from '@/services/auth';
+
+export default function useUserModel() {
+  const [currentUser, setCurrentUser] = useState<API.CurrentUser | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  // 登录
+  const login = useCallback(async (loginParams: API.LoginParams) => {
+    setLoading(true);
+    try {
+      const result = await authService.login(loginParams);
+      setCurrentUser(result.user);
+      localStorage.setItem('token', result.token);
+      localStorage.setItem('tokenExpires', result.expires.toString());
+      
+      message.success('登录成功');
+      
+      // 跳转到原来要访问的页面或默认页面
+      const urlParams = new URL(window.location.href).searchParams;
+      history.push(urlParams.get('redirect') || '/dashboard');
+      
+      return result;
+    } catch (error) {
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // 登出
+  const logout = useCallback(async () => {
+    try {
+      await authService.logout();
+    } catch (error) {
+      console.error('Logout error:', error);
+    } finally {
+      setCurrentUser(null);
+      localStorage.removeItem('token');
+      localStorage.removeItem('tokenExpires');
+      history.push('/user/login');
+    }
+  }, []);
+
+  // 获取当前用户信息
+  const fetchUserInfo = useCallback(async () => {
+    setLoading(true);
+    try {
+      const userInfo = await authService.getCurrentUser();
+      setCurrentUser(userInfo);
+      return userInfo;
+    } catch (error) {
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // 更新用户信息
+  const updateUserInfo = useCallback((userInfo: Partial<API.CurrentUser>) => {
+    if (currentUser) {
+      setCurrentUser({ ...currentUser, ...userInfo });
+    }
+  }, [currentUser]);
+
+  return {
+    currentUser,
+    loading,
+    login,
+    logout,
+    fetchUserInfo,
+    updateUserInfo,
+  };
+}
+```
+
+### 2. 项目数据模型
+```typescript
+// src/models/project.ts
+import { useState, useCallback, useEffect } from 'react';
+import { message } from 'antd';
+import * as projectService from '@/services/project';
+import type { ProjectData } from '@/pages/Project/data.d';
+
+export default function useProjectModel() {
+  const [projects, setProjects] = useState<ProjectData[]>([]);
+  const [selectedProject, setSelectedProject] = useState<ProjectData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [searchParams, setSearchParams] = useState<API.ProjectParams>({});
+  const [pagination, setPagination] = useState({
+    current: 1,
+    pageSize: 20,
+    total: 0,
+  });
+
+  // 获取项目列表
+  const fetchProjects = useCallback(async (params?: API.ProjectParams) => {
+    setLoading(true);
+    try {
+      const mergedParams = { ...searchParams, ...params };
+      const response = await projectService.getProjectList(mergedParams);
+      
+      setProjects(response.data);
+      setPagination({
+        current: response.current,
+        pageSize: response.pageSize,
+        total: response.total,
+      });
+      
+      return response;
+    } catch (error) {
+      message.error('获取项目列表失败');
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  }, [searchParams]);
+
+  // 获取单个项目
+  const fetchProject = useCallback(async (id: string) => {
+    setLoading(true);
+    try {
+      const project = await projectService.getProject(id);
+      setSelectedProject(project);
+      return project;
+    } catch (error) {
+      message.error('获取项目详情失败');
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // 创建项目
+  const createProject = useCallback(async (projectData: Partial<ProjectData>) => {
+    try {
+      const newProject = await projectService.createProject(projectData);
+      message.success('项目创建成功');
+      await fetchProjects(); // 重新加载列表
+      return newProject;
+    } catch (error) {
+      message.error('项目创建失败');
+      throw error;
+    }
+  }, [fetchProjects]);
+
+  // 更新项目
+  const updateProject = useCallback(async (id: string, projectData: Partial<ProjectData>) => {
+    try {
+      const updatedProject = await projectService.updateProject(id, projectData);
+      message.success('项目更新成功');
+      
+      // 更新列表中的项目
+      setProjects(prev => prev.map(p => p.id === id ? updatedProject : p));
+      
+      // 如果是当前选中的项目，也要更新
+      if (selectedProject?.id === id) {
+        setSelectedProject(updatedProject);
+      }
+      
+      return updatedProject;
+    } catch (error) {
+      message.error('项目更新失败');
+      throw error;
+    }
+  }, [selectedProject, fetchProjects]);
+
+  // 删除项目
+  const deleteProject = useCallback(async (id: string) => {
+    try {
+      await projectService.deleteProject(id);
+      message.success('项目删除成功');
+      
+      // 从列表中移除
+      setProjects(prev => prev.filter(p => p.id !== id));
+      
+      // 如果删除的是当前选中的项目，清空选中状态
+      if (selectedProject?.id === id) {
+        setSelectedProject(null);
+      }
+      
+      // 更新分页信息
+      setPagination(prev => ({
+        ...prev,
+        total: prev.total - 1,
+      }));
+    } catch (error) {
+      message.error('项目删除失败');
+      throw error;
+    }
+  }, [selectedProject]);
+
+  // 批量删除项目
+  const batchDeleteProjects = useCallback(async (ids: string[]) => {
+    try {
+      await projectService.batchDeleteProjects(ids);
+      message.success(`成功删除 ${ids.length} 个项目`);
+      await fetchProjects(); // 重新加载列表
+    } catch (error) {
+      message.error('批量删除失败');
+      throw error;
+    }
+  }, [fetchProjects]);
+
+  // 更新搜索参数
+  const updateSearchParams = useCallback((params: API.ProjectParams) => {
+    setSearchParams(prev => ({ ...prev, ...params }));
+  }, []);
+
+  // 重置搜索参数
+  const resetSearchParams = useCallback(() => {
+    setSearchParams({});
+  }, []);
+
+  return {
+    projects,
+    selectedProject,
+    loading,
+    pagination,
+    searchParams,
+    setSelectedProject,
+    fetchProjects,
+    fetchProject,
+    createProject,
+    updateProject,
+    deleteProject,
+    batchDeleteProjects,
+    updateSearchParams,
+    resetSearchParams,
+  };
+}
+```
+
+### 3. 地图数据模型
+```typescript
+// src/models/map.ts
+import { useState, useCallback } from 'react';
+import { message } from 'antd';
+import * as projectService from '@/services/project';
+import type { ProjectData } from '@/pages/Project/data.d';
+
+export default function useMapModel() {
+  const [mapProjects, setMapProjects] = useState<ProjectData[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [mapState, setMapState] = useState({
+    center: [103.8198, 1.3521] as [number, number], // Singapore
+    zoom: 11,
+    bounds: null as [number, number, number, number] | null,
+  });
+  const [filters, setFilters] = useState<{
+    status?: string[];
+    type?: string[];
+  }>({});
+
+  // 获取地图项目数据
+  const fetchMapProjects = useCallback(async (params?: {
+    bounds?: [number, number, number, number];
+    zoom?: number;
+    status?: string[];
+    type?: string[];
+  }) => {
+    setLoading(true);
+    try {
+      const mergedParams = {
+        bounds: mapState.bounds,
+        zoom: mapState.zoom,
+        ...filters,
+        ...params,
+      };
+      
+      const projects = await projectService.getMapProjects(mergedParams);
+      setMapProjects(projects);
+      return projects;
+    } catch (error) {
+      message.error('获取地图数据失败');
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  }, [mapState, filters]);
+
+  // 更新地图状态
+  const updateMapState = useCallback((state: Partial<typeof mapState>) => {
+    setMapState(prev => ({ ...prev, ...state }));
+  }, []);
+
+  // 更新过滤条件
+  const updateFilters = useCallback((newFilters: typeof filters) => {
+    setFilters(prev => ({ ...prev, ...newFilters }));
+  }, []);
+
+  // 重置过滤条件
+  const resetFilters = useCallback(() => {
+    setFilters({});
+  }, []);
+
+  return {
+    mapProjects,
+    loading,
+    mapState,
+    filters,
+    fetchMapProjects,
+    updateMapState,
+    updateFilters,
+    resetFilters,
+  };
+}
+```
+
+## 初始化状态配置
+
+### 1. 应用初始化
+```typescript
+// src/app.tsx
+import { RunTimeLayoutConfig, RequestConfig } from 'umi';
+import { getCurrentUser } from '@/services/auth';
+import { PageLoading } from '@ant-design/pro-layout';
+
+// 全局初始化数据配置
+export async function getInitialState(): Promise<{
+  currentUser?: API.CurrentUser;
+  loading?: boolean;
+  fetchUserInfo?: () => Promise<API.CurrentUser | undefined>;
+}> {
+  const fetchUserInfo = async () => {
+    try {
+      const user = await getCurrentUser();
+      return user;
+    } catch (error) {
+      console.error('Failed to fetch user info:', error);
+      // 清除无效的 token
+      localStorage.removeItem('token');
+      return undefined;
+    }
+  };
+
+  // 如果是登录页面，不执行
+  if (window.location.pathname !== '/user/login') {
+    const token = localStorage.getItem('token');
+    if (token) {
+      const currentUser = await fetchUserInfo();
+      return {
+        fetchUserInfo,
+        currentUser,
+      };
+    }
+  }
+
+  return {
+    fetchUserInfo,
+  };
+}
+
+// ProLayout 配置
+export const layout: RunTimeLayoutConfig = ({ initialState }) => {
+  return {
+    rightContentRender: () => <RightContent />,
+    disableContentMargin: false,
+    waterMarkProps: {
+      content: initialState?.currentUser?.name,
+    },
+    footerRender: () => <Footer />,
+    onPageChange: () => {
+      const { location } = history;
+      // 如果没有登录，重定向到 login
+      if (!initialState?.currentUser && location.pathname !== '/user/login') {
+        history.push('/user/login');
+      }
+    },
+    links: isDev
+      ? [
+          <Link to="/umi/plugin/openapi" target="_blank">
+            <LinkOutlined />
+            <span>OpenAPI 文档</span>
+          </Link>,
+        ]
+      : [],
+    menuHeaderRender: undefined,
+    // 自定义 403 页面
+    unAccessible: <div>unAccessible</div>,
+    // 增加一个 loading 的状态
+    childrenRender: (children, props) => {
+      if (initialState?.loading) return <PageLoading />;
+      return <>{children}</>;
+    },
+  };
+};
+```
+
+### 2. 请求配置
+```typescript
+// 接上面 src/app.tsx 中的 request 配置
+export const request: RequestConfig = {
+  // ... 之前的配置
+};
+```
+
+这套 API 集成和数据管理模式为 Ant Design Pro 项目提供了：
+
+✅ **统一的错误处理**：全局错误拦截和用户友好的错误提示  
+✅ **类型安全**：完整的 TypeScript 类型定义  
+✅ **权限管理**：基于 token 的认证和权限控制  
+✅ **数据缓存**：Umi Model 提供的状态管理和缓存机制  
+✅ **请求拦截**：自动添加认证信息和统一处理响应  
+✅ **分页支持**：ProTable 兼容的分页数据结构  
+✅ **文件上传**：完整的文件上传和管理功能  
+✅ **地图数据**：针对地图应用优化的数据获取方式
